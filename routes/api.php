@@ -103,40 +103,34 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/sessions/{id}/end', [ExerciceRespirationController::class, 'endSession']);
     Route::get('/sessions', [ExerciceRespirationController::class, 'userSessions']);
     Route::get('/statistiques', [ExerciceRespirationController::class, 'userStats']);
+
+    // Autoriser modification/suppression de contenu à tout utilisateur connecté
+    Route::put('/contenus/{id}', [ContenuInformationController::class, 'update']);
+    Route::delete('/contenus/{id}', [ContenuInformationController::class, 'destroy']);
+
+    // statistiques utilisateur
+        Route::get('/statistiques-mensuelles', [ExerciceRespirationController::class, 'monthlyStats']);
 });
 
 // ========================================
 // ROUTES ADMINISTRATEUR (admin uniquement)
 // ========================================
 
-Route::middleware(['auth:sanctum', 'admin'])->group(function () {
+Route::middleware(['auth:sanctum'])->group(function () {
     
-    // =============
     // GESTION DES UTILISATEURS
-    // =============
-    Route::get('/users', [UserController::class, 'index']);           // Liste tous les utilisateurs
-    Route::post('/users', [UserController::class, 'store']);          // Créer un utilisateur
-    Route::put('/users/{id}', [UserController::class, 'update']);     // Modifier un utilisateur
-    Route::delete('/users/{id}', [UserController::class, 'destroy']); // Supprimer un utilisateur
+    Route::get('/users', [UserController::class, 'index']);
+    Route::post('/users', [UserController::class, 'store']);
+    Route::put('/users/{id}', [UserController::class, 'update']);
+    Route::delete('/users/{id}', [UserController::class, 'destroy']);
     
-    // =============
-    // GESTION DES CONTENUS
-    // =============
-    Route::post('/contenus', [ContenuInformationController::class, 'store']);     // Créer un contenu
-    Route::put('/contenus/{id}', [ContenuInformationController::class, 'update']); // Modifier un contenu
-    Route::delete('/contenus/{id}', [ContenuInformationController::class, 'destroy']); // Supprimer un contenu
-    
-    // =============
-    // GESTION DES EXERCICES (à ajouter si nécessaire)
-    // =============
-    // Route::post('/exercices', [ExerciceRespirationController::class, 'store']);
-    // Route::put('/exercices/{id}', [ExerciceRespirationController::class, 'update']);
-    // Route::delete('/exercices/{id}', [ExerciceRespirationController::class, 'destroy']);
-    
-    // =============
-    // STATISTIQUES ET TABLEAU DE BORD ADMIN
-    // =============
-    Route::get('/admin/stats', [AdminController::class, 'getStats']);           // Statistiques générales
-    Route::get('/admin/activity', [AdminController::class, 'getRecentActivity']); // Activités récentes
-    Route::get('/admin/charts', [AdminController::class, 'getChartData']);      // Données pour graphiques
+    // STATISTIQUES ADMIN
+    Route::get('/admin/stats', [AdminController::class, 'getStats']);
+    Route::get('/admin/activity', [AdminController::class, 'getRecentActivity']);
+    Route::get('/admin/charts', [AdminController::class, 'getChartData']);
 });
+
+
+Route::get('/login', function () {
+    return response()->json(['message' => 'Non authentifié'], 401);
+})->name('login');

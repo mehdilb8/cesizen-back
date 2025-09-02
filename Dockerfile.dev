@@ -1,0 +1,48 @@
+FROM php:8.2-fpm
+
+# Installation des dépendances système
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    libpng-dev \
+    libonig-dev \
+    libxml2-dev \
+    zip \
+    unzip \
+    libzip-dev \
+    nodejs \
+    npm \
+    && docker-php-ext-install pdo_mysql mbstring exif pcntl bcmath gd zip
+
+# Installation de Composer
+COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+
+# Définition du répertoire de travail
+WORKDIR /var/www/html
+
+# Copie des fichiers de dépendances
+COPY composer.json composer.lock ./
+
+# Installation des dépendances PHP (avec dev)
+RUN composer install --optimize-autoloader
+
+# Copie du code source
+COPY . .
+
+# Création des répertoires nécessaires
+RUN mkdir -p storage/framework/{sessions,views,cache} \
+    && mkdir -p bootstrap/cache
+
+# Attribution des permissions
+RUN chown -R www-data:www-data /var/www/html \
+    && chmod -R 775 storage \
+    && chmod -R 775 bootstrap/cache
+
+# Installation des dépendances Node.js si package.json existe
+RUN if [ -f package.json ]; then npm install; fi
+
+# Exposition du port
+EXPOSE 8000
+
+# Commande par défaut pour le développement
+CMD ["php", "artisan", "serve", "--host=0.0.0.0", "--port=8000"]

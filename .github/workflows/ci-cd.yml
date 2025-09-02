@@ -1,0 +1,200 @@
+name: CI/CD Pipeline - Cesizen Backend
+
+on:
+  push:
+    branches: [ master, develop ]
+  pull_request:
+    branches: [ master, develop ]
+  workflow_dispatch:
+
+env:
+  PHP_VERSION: '8.2'
+  COMPOSER_CACHE_DIR: ~/.composer/cache
+
+jobs:
+  # Job de tests et qualité du code
+  test:
+    name: Tests & Code Quality
+    runs-on: ubuntu-latest
+    
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: cesizen_test
+          MYSQL_USER: test_user
+          MYSQL_PASSWORD: test_password
+        ports:
+          - 3306:3306
+        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          extensions: mbstring, xml, ctype, iconv, intl, pdo_mysql, gd, zip, curl, fileinfo
+          coverage: xdebug
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Get Composer Cache Directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
+
+      - name: Cache Composer dependencies
+        uses: actions/cache@v3
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-php-${{ hashFiles('**/composer.lock') }}
+          restore-keys: ${{ runner.os }}-php-
+
+      - name: Install Composer dependencies
+        run: composer install --prefer-dist --no-progress --no-interaction
+
+      - name: Copy environment file
+        run: cp .env.example .env
+
+      - name: Generate application key
+        run: php artisan key:generate
+
+      - name: Set directory permissions
+        run: chmod -R 777 storage bootstrap/cache
+
+      - name: Create database
+        run: |
+          mysql -h 127.0.0.1 -P 3306 -u root -proot -e "CREATE DATABASE IF NOT EXISTS cesizen_test;"
+          mysql -h 127.0.0.1 -P 3306 -u root -proot -e "GRANT ALL PRIVILEGES ON cesizen_test.* TO 'test_user'@'%';"
+
+      - name: Run database migrations
+        run: php artisan migrate --env=testing --force
+
+      - name: Run tests
+        run: php artisan test --coverage-clover=coverage.xml
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: false
+
+      - name: Run PHPStan analysis
+        run: |
+          composer require --dev phpstan/phpstan
+          ./vendor/bin/phpstan analyse --level=5 app
+
+      - name: Run PHP CS Fixer
+        run: |
+          composer require --dev friendsofphp/php-cs-fixer
+          ./vendor/bin/php-cs-fixer fix --dry-run --diff
+
+  # Job de sécurité
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+
+      - name: Install Composer dependencies
+        run: composer install --prefer-dist --no-progress --no-interaction
+
+      - name: Run Security Check
+        run: |
+          composer require --dev enlightn/security-checker
+          ./vendor/bin/security-checker security:check composer.lock
+
+      - name: Run PHP Security Check
+        run: |
+          composer require --dev phpcs-security-audit/phpcs-security-audit
+          ./vendor/bin/phpcs --standard=Security /app
+
+  # Job de build Docker (optionnel)
+  build-docker:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: [test, security]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push Production image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/cesizen-backend:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/cesizen-backend:${{ github.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/cesizen-backend:v${{ github.run_number }}
+
+      - name: Build and push Development image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.dev
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/cesizen-backend:dev-latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/cesizen-backend:dev-${{ github.sha }}
+
+  # Job de notification simple
+  notify:
+    name: Notify Team
+    runs-on: ubuntu-latest
+    needs: [test, security, build-docker]
+    if: always()
+    
+    steps:
+      - name: Notify on Slack
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          channel: '#cesizen-deployments'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+          text: |
+            🚀 Cesizen Backend CI/CD
+            Status: ${{ job.status }}
+            Commit: ${{ github.sha }}
+            Branch: ${{ github.ref_name }}
+            Author: ${{ github.actor }}
+
+      - name: Notify on Discord
+        if: always()
+        uses: Ilshidur/action-discord@master
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        with:
+          args: |
+            🚀 **Cesizen Backend CI/CD**
+            **Status:** ${{ job.status }}
+            **Commit:** ${{ github.sha }}
+            **Branch:** ${{ github.ref_name }}
+            **Author:** ${{ github.actor }}
